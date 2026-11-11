@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<style>
+  :root {
+    --bg: #262c4e;
+    --text: #e8eaf2;
+    --muted: #9ca2bd;
+    --line: rgba(255,255,255,.08);
+    --accent: #8ab4f8;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body { background: transparent; }
+  html, body { margin: 0; color: var(--text);
+    font-family: "Google Sans", Roboto, Arial, sans-serif; font-size: 15px; }
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1;
+    background:
+      linear-gradient(rgba(38,44,78,.78), rgba(38,44,78,.88)),
+      url("https://images.pexels.com/photos/7991436/pexels-photo-7991436.jpeg?auto=compress&cs=tinysrgb&w=1600")
+      center / cover no-repeat;
+  }
+  .app { max-width: 640px; margin: 0 auto; padding: 0 8px 48px; }
+
+  .top { display: flex; align-items: center; gap: 8px; padding: 8px 8px 12px; position: sticky; top: 0; background: rgba(38,44,78,.55); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 5; }
+  #q { flex: 1; background: rgba(255,255,255,.07); border: 0; border-radius: 8px; color: var(--text);
+    padding: 9px 12px; font: inherit; outline: none; }
+  #q:focus { box-shadow: 0 0 0 2px var(--accent); }
+  #q::placeholder { color: var(--muted); }
+
+  .row { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 4px; border-radius: 6px; }
+  .row.sortable-ghost { opacity: .35; }
+  .row:hover { background: rgba(255,255,255,.04); }
+  .handle { width: 22px; text-align: center; color: var(--muted); cursor: grab; user-select: none;
+    font-size: 16px; letter-spacing: -3px; touch-action: none; opacity: .8; }
+  .done .handle { visibility: hidden; }
+  .cb { flex: none; width: 18px; height: 18px; margin: 0 10px; padding: 0; border: 2px solid var(--muted);
+    border-radius: 3px; background: none; cursor: pointer; position: relative; }
+  .cb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .done .cb { background: var(--muted); }
+  .done .cb::after { content: ""; position: absolute; left: 4px; top: 0; width: 4px; height: 9px;
+    border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .txt { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--text);
+    font: inherit; padding: 10px 0; text-overflow: ellipsis; }
+  .done .txt { color: var(--muted); text-decoration: line-through; }
+  .del { flex: none; width: 28px; height: 28px; border: 0; background: none; color: var(--muted);
+    font-size: 20px; line-height: 1; border-radius: 50%; cursor: pointer; visibility: hidden; }
+  .row:hover .del, .row:focus-within .del { visibility: visible; }
+  .del:hover { background: rgba(255,255,255,.1); color: var(--text); }
+
+  .add { display: flex; align-items: center; min-height: 44px; padding: 0 4px; }
+  .plus { width: 22px; text-align: center; color: var(--muted); font-size: 22px; margin-right: 4px; }
+  .add input { flex: 1; background: none; border: 0; outline: none; color: var(--text); font: inherit; padding: 10px 0 10px 10px; }
+  .add input::placeholder { color: var(--muted); }
+
+  .sec { display: none; align-items: center; gap: 8px; padding: 12px 8px; margin-top: 4px; cursor: pointer;
+    color: var(--text); border-top: 1px solid var(--line); user-select: none; }
+  .chev { width: 8px; height: 8px; border: solid var(--muted); border-width: 0 2px 2px 0; transform: rotate(45deg);
+    margin: 0 8px 4px 6px; transition: transform .15s; }
+  .collapsed .chev { transform: rotate(-45deg); margin-bottom: 0; }
+  #done { display: block; }
+  .collapsed + #done { display: none; }
+  .empty { color: var(--muted); padding: 24px 12px; text-align: center; }
+  #toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: #111; color: #fff;
+    padding: 8px 14px; border-radius: 6px; display: none; font-size: 13px; }
+  @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top"><input id="q" type="search" placeholder="Search movies"></div>
+  <div id="list"></div>
+  <div class="add"><span class="plus">+</span><input id="newItem" placeholder="List item" autocomplete="off"></div>
+  <div class="sec" id="secHead"><span class="chev"></span><span id="secLabel"></span></div>
+  <div id="done"></div>
+  <div id="loading" class="empty">Loading...</div>
+</div>
+<div id="toast"></div>
+
+<script>
+  let items = [];
+  let collapsed = false;
+  let queue = Promise.resolve();
+  const $ = id => document.getElementById(id);
+  const listEl = $('list'), doneEl = $('done'), q = $('q'), secHead = $('secHead');
+
+  const sortable = Sortable.create(listEl, {
+    handle: '.handle', animation: 150, delay: 0,
+    onEnd(evt) {
+      const row = Number(evt.item.dataset.row);
+      const next = evt.item.nextElementSibling;
+      const before = next ? Number(next.dataset.row) : null;
+      call('moveItem', row, before).then(r => { if (r) { items = r; render(); } });
+    }
+  });
+
+  // Run server calls one at a time so row numbers stay consistent.
+  function call(fn, ...args) {
+    queue = queue.then(() => new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(e => { toast('Could not save: ' + e.message); reject(e); })
+        [fn](...args);
+    })).catch(() => { load(); });
+    return queue;
+  }
+
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+    clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 3500);
+  }
+
+  function load() {
+    google.script.run.withSuccessHandler(r => {
+      items = r; $('loading').remove(); render();
+    }).withFailureHandler(e => toast(e.message)).getItems();
+  }
+
+  function rowEl(it, draggable) {
+    const d = document.createElement('div');
+    d.className = 'row' + (it.done ? ' done' : '');
+    d.dataset.row = it.row;
+
+    const h = document.createElement('span');
+    h.className = 'handle'; h.textContent = draggable ? '\u22EE\u22EE' : '';
+
+    const cb = document.createElement('button');
+    cb.className = 'cb'; cb.setAttribute('aria-label', it.done ? 'Uncheck' : 'Check');
+    cb.onclick = () => toggle(it);
+
+    const t = document.createElement('input');
+    t.className = 'txt'; t.value = it.text;
+    t.onkeydown = e => { if (e.key === 'Enter') t.blur(); };
+    t.onblur = () => {
+      const v = t.value.trim();
+      if (v === it.text) return;
+      if (!v) return remove(it);
+      it.text = v; call('setText', it.row, v);
+    };
+
+    const x = document.createElement('button');
+    x.className = 'del'; x.textContent = '\u00D7'; x.setAttribute('aria-label', 'Delete');
+    x.onclick = () => remove(it);
+
+    d.append(h, cb, t, x);
+    return d;
+  }
+
+  function render() {
+    const term = q.value.trim().toLowerCase();
+    const match = i => !term || i.text.toLowerCase().includes(term);
+    const open = items.filter(i => !i.done && match(i));
+    const closed = items.filter(i => i.done && match(i));
+    listEl.replaceChildren(...open.map(i => rowEl(i, true)));
+    doneEl.replaceChildren(...closed.map(i => rowEl(i, false)));
+    $('secLabel').textContent = closed.length + ' checked item' + (closed.length === 1 ? '' : 's');
+    secHead.style.display = items.some(i => i.done) ? 'flex' : 'none';
+    secHead.classList.toggle('collapsed', collapsed);
+    sortable.option('disabled', !!term);
+  }
+
+  function toggle(it) {
+    it.done = !it.done; render();
+    call('setDone', it.row, it.done);
+  }
+
+  function remove(it) {
+    items = items.filter(i => i !== it);
+    items.forEach(i => { if (i.row > it.row) i.row--; });
+    render();
+    call('deleteItem', it.row);
+  }
+
+  function add() {
+    const v = $('newItem').value.trim();
+    if (!v) return;
+    const row = items.reduce((m, i) => Math.max(m, i.row), 1) + 1;
+    items.push({ row, done: false, text: v });
+    $('newItem').value = ''; render();
+    call('addItem', v);
+  }
+
+  $('newItem').onkeydown = e => { if (e.key === 'Enter') add(); };
+  $('newItem').onblur = add;
+  q.oninput = render;
+  secHead.onclick = () => { collapsed = !collapsed; render(); };
+  load();
+</script>
+</body>
+</html>
