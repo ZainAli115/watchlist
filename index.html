@@ -1,8 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-<base target="_top">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#262c4e">
+<title>Movies to Watch</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
 <style>
   :root {
@@ -98,13 +102,24 @@
     }
   });
 
+  // Paste your Apps Script Web App URL (ends in /exec) here:
+  const API = 'https://script.google.com/macros/s/AKfycbxsNLQ0QgmpjEhzLSxHyTk-KVXt-oVfMbKTCdc_qXBPw56nmKr_AJb9CUue-coQaWHm/exec';
+
+  // text/plain avoids a CORS preflight, which Apps Script can't answer.
+  function rpc(fn, args) {
+    return fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ fn, args })
+    })
+      .then(r => r.json())
+      .then(j => { if (j.error) throw new Error(j.error); return j.result; });
+  }
+
   // Run server calls one at a time so row numbers stay consistent.
   function call(fn, ...args) {
-    queue = queue.then(() => new Promise((resolve, reject) => {
-      google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(e => { toast('Could not save: ' + e.message); reject(e); })
-        [fn](...args);
+    queue = queue.then(() => rpc(fn, args).catch(e => {
+      toast('Could not save: ' + e.message); throw e;
     })).catch(() => { load(); });
     return queue;
   }
@@ -115,9 +130,11 @@
   }
 
   function load() {
-    google.script.run.withSuccessHandler(r => {
-      items = r; $('loading').remove(); render();
-    }).withFailureHandler(e => toast(e.message)).getItems();
+    rpc('getItems', []).then(r => {
+      items = r;
+      try { localStorage.setItem('items', JSON.stringify(r)); } catch (e) {}
+      $('loading')?.remove(); render();
+    }).catch(e => toast(e.message));
   }
 
   function rowEl(it, draggable) {
@@ -188,7 +205,12 @@
   $('newItem').onblur = add;
   q.oninput = render;
   secHead.onclick = () => { collapsed = !collapsed; render(); };
+  try {
+    const c = JSON.parse(localStorage.getItem('items') || 'null');
+    if (c) { items = c; $('loading')?.remove(); render(); }
+  } catch (e) {}
   load();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
 </body>
 </html>
